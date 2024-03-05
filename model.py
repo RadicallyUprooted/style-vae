@@ -2,18 +2,21 @@ import torch
 import torch.nn as nn
 
 class ResidualBlock(nn.Module):
-    def __init__(self):
+    def __init__(self, features):
         super(ResidualBlock, self).__init__()
-
-        self.conv1 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
-        self.batch_norm = nn.BatchNorm2d(64)
+        self.features = features
+        self.residual_block = nn.Sequential(
+            nn.Conv2d(self.features, self.features, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(self.features),
+            nn.ReLU(),
+            nn.Conv2d(self.features, self.features, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(self.features),
+        )
 
     def forward(self, x):
 
         residual = x
-        x = nn.ReLU()(self.batch_norm(self.conv1(x)))
-        x = self.batch_norm(self.conv2(x))
+        x = self.residual_block(x)
         x += residual
         x = nn.ReLU()(x)
         
@@ -23,24 +26,44 @@ class EncoderLR(nn.Module):
     def __init__(self, latent_dim):
         super(EncoderLR, self).__init__()
 
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=2, padding=1)
-        self.residual = nn.Sequential(
-            ResidualBlock(),
-            ResidualBlock(),
-            ResidualBlock(),
-            ResidualBlock(),
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+
         )
-        self.upsample = nn.Upsample(scale_factor=2, mode='bicubic')
-        self.conv2 = nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1)
+        self.residual = nn.Sequential(
+            ResidualBlock(64),
+            ResidualBlock(64),
+            ResidualBlock(64),
+            ResidualBlock(64),
+        )
+        self.upsample = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='nearest'),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Upsample(scale_factor=2, mode='nearest'),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(in_channels=64, out_channels=3, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(3),
+            nn.ReLU(),
+        )
         self.fc_mu = nn.Linear(3 * 64 * 64, latent_dim)
         self.fc_sigma = nn.Linear(3 * 64 * 64, latent_dim)
 
     def forward(self, x):
 
-        x = nn.ReLU()(self.conv1(x))
+        x = self.conv1(x)
         x = self.residual(x)
         x = self.upsample(x)
-        x = nn.ReLU()(self.conv2(x))
+        x = self.conv2(x)
+
         x = x.view(x.size(0), -1)
 
         mu = self.fc_mu(x)
@@ -48,33 +71,52 @@ class EncoderLR(nn.Module):
 
         sigma = torch.exp(0.5 * log_sigma)
         eps = torch.randn_like(sigma)
+
         z_lr = mu + eps * sigma
 
         return z_lr, mu, log_sigma
+
 
 class EncoderHR(nn.Module):
     def __init__(self, latent_dim):
         super(EncoderHR, self).__init__()
 
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=2, padding=1)
-        
-        self.residual = nn.Sequential(
-            ResidualBlock(),
-            ResidualBlock(),
-            ResidualBlock(),
-            ResidualBlock(),
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
         )
-        self.upsample = nn.Upsample(scale_factor=2, mode='bicubic')
-        self.conv2 = nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1)
-        
+        self.residual = nn.Sequential(
+            ResidualBlock(64),
+            ResidualBlock(64),
+            ResidualBlock(64),
+            ResidualBlock(64),
+        )
+        self.upsample = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='nearest'),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Upsample(scale_factor=2, mode='nearest'),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(in_channels=64, out_channels=3, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(3),
+            nn.ReLU(),
+        )
         self.fc_z = nn.Linear(3 * 64 * 64, latent_dim)
 
     def forward(self, x):
 
-        x = nn.ReLU()(self.conv1(x))
+        x = self.conv1(x)
         x = self.residual(x)
         x = self.upsample(x)
-        x = nn.ReLU()(self.conv2(x))
+        x = self.conv2(x)
+
         x = x.view(x.size(0), -1)
 
         z_hr = self.fc_z(x)
@@ -104,26 +146,52 @@ class DecoderHR(nn.Module):
     def __init__(self, latent_dim):
         super(DecoderHR, self).__init__()
 
-        self.fc = nn.Linear(latent_dim, 3 * 64 * 64)
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1)
+        self.fc = nn.Linear(latent_dim, 3 * 16 * 16)
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+        )
         self.residual = nn.Sequential(
-            ResidualBlock(),
+            ResidualBlock(64),
             AdaIN(latent_dim),
-            ResidualBlock(),
+            ResidualBlock(64),
             AdaIN(latent_dim),
-            ResidualBlock(),
+            ResidualBlock(64),
             AdaIN(latent_dim),
-            ResidualBlock(),
+            ResidualBlock(64),
             AdaIN(latent_dim),
         )
-        self.upsample = nn.Upsample(scale_factor=2, mode='bicubic')
-        self.conv2 = nn.Conv2d(64, 3, kernel_size=3, stride=2, padding=1)
+        self.upsample = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='nearest'),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Upsample(scale_factor=2, mode='nearest'),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=32, out_channels=16, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(16),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=16, out_channels=8, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(8),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=8, out_channels=3, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(3),
+            nn.ReLU(),
+        )
     
 
     def forward(self, z_hr, z_lr):
-        x = self.fc(z_hr)
-        x = x.view(x.size(0), -1, 64, 64)
-        x = nn.ReLU()(self.conv1(x))
+
+        x = nn.ReLU()(self.fc(z_hr))
+        x = x.view(x.size(0), -1, 16, 16)
+        
+        x = self.conv1(x)
         
         for layer in self.residual:
             if isinstance(layer, AdaIN):
@@ -132,6 +200,6 @@ class DecoderHR(nn.Module):
                 x = layer(x)
 
         x = self.upsample(x)
-        x = nn.ReLU()(self.conv2(x))
+        x = self.conv2(x)
 
         return x
