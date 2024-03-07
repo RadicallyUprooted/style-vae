@@ -22,21 +22,16 @@ class Loader(Dataset):
         original_image = Image.open(original_image).convert("RGB")
         distorted_image = Image.open(distorted_image).convert("RGB")
 
-        distorted_image = distorted_image.save("temp_distorted.jpg", quality=5)
-        distorted_image = Image.open("temp_distorted.jpg").convert("RGB")
-        os.remove("temp_distorted.jpg")
+        degradation = transforms.Compose([
+                transforms.Resize((64, 64)),
+                transforms.ElasticTransform(alpha=150.0, sigma=7.0),
+                transforms.GaussianBlur(kernel_size=3, sigma=(1.0, 2.0)),
+                transforms.ToTensor(),])
 
         transform = transforms.Compose([
-                transforms.Resize((64, 64)),
-                transforms.ToTensor(),])
-                
+            transforms.Resize((64, 64)),
+            transforms.ToTensor(),])        
         original_image = transform(original_image)
-        distorted_image = transform(distorted_image)
+        distorted_image = degradation(distorted_image)
 
         return original_image, distorted_image
-
-
-
-
-
-
