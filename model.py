@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torchvision.models as models
 
 class ResidualBlock(nn.Module):
     def __init__(self, features):
@@ -50,7 +51,10 @@ class EncoderLR(nn.Module):
             nn.ReLU(),
         )
         self.conv2 = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=3, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=32, out_channels=3, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(3),
             nn.ReLU(),
         )
@@ -104,7 +108,10 @@ class EncoderHR(nn.Module):
             nn.ReLU(),
         )
         self.conv2 = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=3, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=32, out_channels=3, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(3),
             nn.ReLU(),
         )
@@ -148,7 +155,10 @@ class DecoderHR(nn.Module):
 
         self.fc = nn.Linear(latent_dim, 3 * 16 * 16)
         self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
         )
@@ -174,15 +184,9 @@ class DecoderHR(nn.Module):
             nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=16, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=16, out_channels=8, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(8),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=8, out_channels=3, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(in_channels=32, out_channels=3, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(3),
-            nn.ReLU(),
+            nn.Sigmoid(),
         )
     
 
@@ -203,3 +207,19 @@ class DecoderHR(nn.Module):
         x = self.conv2(x)
 
         return x
+
+class VGGLoss(nn.Module):
+    def __init__(self):
+        super(VGGLoss, self).__init__()
+
+        self.vgg = models.vgg19(weights='DEFAULT').features[:11]
+        self.indexes = [0, 5, 10]
+
+    def forward(self, x):
+        features = []
+        for index, layer in enumerate(self.vgg):
+            x = layer(x)
+            if index in self.indexes:
+                features.append(x)
+
+        return features
