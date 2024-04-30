@@ -1,221 +1,235 @@
 import torch
 import torch.nn as nn
 import torchvision.models as models
+from torchvision.transforms import v2
+
+class AdaIN(nn.Module):
+
+    def __init__(self, style_dim, features):
+        super().__init__()
+        self.norm = nn.InstanceNorm2d(features, affine=False)
+        self.fc = nn.Linear(style_dim, features * 2)
+
+    def forward(self, x, s):
+
+        h = self.fc(s)
+        h = h.view(h.size(0), h.size(1), 1, 1)
+        gamma, beta = torch.chunk(h, chunks=2, dim=1)
+        return (1 + gamma) * self.norm(x) + beta
 
 class ResidualBlock(nn.Module):
+
     def __init__(self, features):
         super(ResidualBlock, self).__init__()
-        self.features = features
-        self.residual_block = nn.Sequential(
-            nn.Conv2d(self.features, self.features, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(self.features),
-            nn.ReLU(),
-            nn.Conv2d(self.features, self.features, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(self.features),
-        )
+        self.norm1 = nn.InstanceNorm2d(features)
+        self.actv1 = nn.LeakyReLU(0.2)
+        self.conv1 = nn.Conv2d(kernel_size=3, in_channels=features, out_channels=features, stride=1, padding=1)
+        
+        self.norm2 = nn.InstanceNorm2d(features)
+        self.actv2 = nn.LeakyReLU(0.2)
+        self.conv2 = nn.Conv2d(kernel_size=3, in_channels=features, out_channels=features, stride=1, padding=1)
+
+    def forward(self, x):
+        residual = x
+        out = self.actv1(self.norm1(x))
+        out = self.conv1(out)
+        out = self.actv2(self.norm2(out))
+        out = self.conv2(out)
+        out = torch.add(out, residual)
+
+        return out
+
+class AdaINResidualBlock(nn.Module):
+
+    def __init__(self, latent_dim, features):
+        super(AdaINResidualBlock, self).__init__()
+        self.norm1 = AdaIN(latent_dim, features)
+        self.actv1 = nn.LeakyReLU(0.2)
+        self.conv1 = nn.Conv2d(kernel_size=3, in_channels=features, out_channels=features, stride=1, padding=1)
+
+        self.norm2 = AdaIN(latent_dim, features)
+        self.actv2 = nn.LeakyReLU(0.2)
+        self.conv2 = nn.Conv2d(kernel_size=3, in_channels=features, out_channels=features, stride=1, padding=1)
+
+    def forward(self, x, z):
+        residual = x
+        out = self.actv1(self.norm1(x, z))
+        out = self.conv1(out)
+        out = self.actv2(self.norm2(out, z))
+        out = self.conv2(out)
+        out = torch.add(out, residual)
+
+        return out
+
+class UpsampleBlock(nn.Module):
+    def __init__(self, features):
+        super().__init__()
+
+        self.conv = nn.Conv2d(kernel_size=3, in_channels=features, out_channels=features, stride=1, padding=1)
+        self.upsample = nn.Upsample(scale_factor=2)
 
     def forward(self, x):
 
-        residual = x
-        x = self.residual_block(x)
-        x += residual
-        x = nn.ReLU()(x)
-        
-        return x
+        x = self.conv(x)
+
+        return self.upsample(x)
+
+class DownsampleBlock(nn.Module):
+    def __init__(self, features):
+        super().__init__()
+
+        self.conv = nn.Conv2d(kernel_size=3, in_channels=features, out_channels=features, stride=1, padding=1)
+        self.downsample = nn.MaxPool2d(2)
+
+    def forward(self, x):
+
+        x = self.conv(x)
+
+        return self.downsample(x)    
 
 class EncoderLR(nn.Module):
     def __init__(self, latent_dim):
         super(EncoderLR, self).__init__()
 
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1)
 
-        )
         self.residual = nn.Sequential(
-            ResidualBlock(64),
-            ResidualBlock(64),
-            ResidualBlock(64),
-            ResidualBlock(64),
+            *[ResidualBlock(64) for _ in range(4)]
         )
-        self.upsample = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='nearest'),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Upsample(scale_factor=2, mode='nearest'),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
+
+        self.downsample = nn.Sequential(
+            DownsampleBlock(64),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+
+            DownsampleBlock(128),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+
+            DownsampleBlock(256),
+            nn.LeakyReLU(0.2),
         )
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=3, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(3),
-            nn.ReLU(),
-        )
-        self.fc_mu = nn.Linear(3 * 64 * 64, latent_dim)
-        self.fc_sigma = nn.Linear(3 * 64 * 64, latent_dim)
+
+        self.to_latent = nn.Linear(256 * 8 * 8, 2 * latent_dim)
+
+    def reparametrize(self, param):
+        
+        mean, log_var = torch.chunk(param, 2, dim=1)
+        std = torch.exp(0.5 * log_var)
+
+        z = mean + std * torch.randn_like(std)
+
+        return z, mean, log_var
 
     def forward(self, x):
 
         x = self.conv1(x)
         x = self.residual(x)
-        x = self.upsample(x)
-        x = self.conv2(x)
-
+        x = self.downsample(x)
         x = x.view(x.size(0), -1)
 
-        mu = self.fc_mu(x)
-        log_sigma = self.fc_sigma(x)
+        embedding = self.to_latent(x)
 
-        sigma = torch.exp(0.5 * log_sigma)
-        eps = torch.randn_like(sigma)
+        z, mean, log_var = self.reparametrize(embedding)
 
-        z_lr = mu + eps * sigma
-
-        return z_lr, mu, log_sigma
-
+        return z, mean, log_var
 
 class EncoderHR(nn.Module):
     def __init__(self, latent_dim):
         super(EncoderHR, self).__init__()
 
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-        )
+        self.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1)
+
         self.residual = nn.Sequential(
-            ResidualBlock(64),
-            ResidualBlock(64),
-            ResidualBlock(64),
-            ResidualBlock(64),
+            *[ResidualBlock(64) for _ in range(4)]
         )
-        self.upsample = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='nearest'),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Upsample(scale_factor=2, mode='nearest'),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
+
+        self.downsample = nn.Sequential(
+            DownsampleBlock(64),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+
+            DownsampleBlock(128),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+
+            DownsampleBlock(256),
+            nn.LeakyReLU(0.2),
         )
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=3, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(3),
-            nn.ReLU(),
-        )
-        self.fc_z = nn.Linear(3 * 64 * 64, latent_dim)
+
+        self.to_latent = nn.Linear(256 * 8 * 8, latent_dim)
 
     def forward(self, x):
 
         x = self.conv1(x)
         x = self.residual(x)
-        x = self.upsample(x)
-        x = self.conv2(x)
-
+        x = self.downsample(x)
         x = x.view(x.size(0), -1)
 
-        z_hr = self.fc_z(x)
+        z_hr = self.to_latent(x)
 
         return z_hr
 
-class AdaIN(nn.Module):
+class Decoder(nn.Module):
     def __init__(self, latent_dim):
-        super(AdaIN, self).__init__()
+        super(Decoder, self).__init__()
 
-        self.to_alpha = nn.Linear(latent_dim, 1)
-        self.to_beta = nn.Linear(latent_dim, 1)
-
-    def adain(self, x, alpha, beta):
-
-        return alpha * (x - torch.mean(x)) / torch.std(x) + beta
-    
-    def forward(self, x, z_lr):
-
-        alpha = self.to_alpha(z_lr)
-        beta = self.to_beta(z_lr)
-        x = self.adain(x, alpha.view(alpha.size(0), -1, 1, 1), beta.view(beta.size(0), -1, 1, 1))
+        self.from_latent = nn.Linear(latent_dim, 256 * 8 * 8)
         
-        return x
-
-class DecoderHR(nn.Module):
-    def __init__(self, latent_dim):
-        super(DecoderHR, self).__init__()
-
-        self.fc = nn.Linear(latent_dim, 3 * 16 * 16)
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-        )
-        self.residual = nn.Sequential(
-            ResidualBlock(64),
-            AdaIN(latent_dim),
-            ResidualBlock(64),
-            AdaIN(latent_dim),
-            ResidualBlock(64),
-            AdaIN(latent_dim),
-            ResidualBlock(64),
-            AdaIN(latent_dim),
-        )
         self.upsample = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='nearest'),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Upsample(scale_factor=2, mode='nearest'),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
+            UpsampleBlock(256),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(in_channels=256, out_channels=128, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+
+            UpsampleBlock(128),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(in_channels=128, out_channels=64, kernel_size=3, stride=1, padding=1),
+            nn.LeakyReLU(0.2),
+
+            UpsampleBlock(64),
+            nn.LeakyReLU(0.2),
         )
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=32, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=3, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(3),
-            nn.Sigmoid(),
-        )
+
+        self.residual = nn.ModuleList()
+        for _ in range(4):
+            self.residual.append(AdaINResidualBlock(latent_dim, 64))
+        
+        self.conv2 = nn.Conv2d(in_channels=64, out_channels=3, kernel_size=3, stride=1, padding=1)
     
-
     def forward(self, z_hr, z_lr):
-
-        x = nn.ReLU()(self.fc(z_hr))
-        x = x.view(x.size(0), -1, 16, 16)
         
-        x = self.conv1(x)
-        
-        for layer in self.residual:
-            if isinstance(layer, AdaIN):
-                x = layer(x, z_lr)
-            else:
-                x = layer(x)
-
+        x = self.from_latent(z_hr)
+        x = x.view(x.size(0), -1, 8, 8)
         x = self.upsample(x)
+
+        for layer in self.residual:
+            x = layer(x, z_lr)
+
         x = self.conv2(x)
 
-        return x
+        return torch.sigmoid(x)
 
-class VGGLoss(nn.Module):
+class VGG(nn.Module):
     def __init__(self):
-        super(VGGLoss, self).__init__()
+        super(VGG, self).__init__()
 
-        self.vgg = models.vgg19(weights='DEFAULT').features[:11]
-        self.indexes = [0, 5, 10]
+        self.vgg = models.vgg19(weights='DEFAULT').features[:29]
+        self.indexes = [0, 5, 10, 19, 28]
+        self.normalize = v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
     def forward(self, x):
+        x = self.normalize(x)
         features = []
         for index, layer in enumerate(self.vgg):
             x = layer(x)
@@ -223,3 +237,42 @@ class VGGLoss(nn.Module):
                 features.append(x)
 
         return features
+
+class MINE(nn.Module):
+    def __init__(self) -> None:
+        super(MINE, self).__init__()
+
+        self.conv1 = nn.Sequential(
+            nn.InstanceNorm2d(3, affine=False),
+            nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1))
+
+        self.conv2 = nn.Sequential(
+            nn.InstanceNorm2d(3, affine=False),
+            nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1))
+
+        self.conv_block = nn.Sequential(
+            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+
+            nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, stride=2, padding=1),
+            nn.LeakyReLU(0.2),
+        )
+        self.fc = nn.Linear(256 * 4 * 4, 1)
+
+    def forward(self, x1, x2):
+        
+        x1 = self.conv1(x1)
+        x2 = self.conv2(x2)
+
+        x = torch.add(x1, x2)
+        x = self.conv_block(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+
+        return x
