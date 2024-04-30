@@ -1,8 +1,10 @@
 import os
 import random
-from PIL import Image
+import torch
 from torch.utils.data import Dataset
-from torchvision import transforms
+from torchvision.transforms import v2, InterpolationMode
+from PIL import Image
+
 
 class Loader(Dataset):
     def __init__(self, folder_path):
@@ -22,15 +24,15 @@ class Loader(Dataset):
         original_image = Image.open(original_image).convert("RGB")
         distorted_image = Image.open(distorted_image).convert("RGB")
 
-        degradation = transforms.Compose([
-                transforms.Resize((64, 64)),
-                transforms.ElasticTransform(alpha=150.0, sigma=7.0),
-                transforms.GaussianBlur(kernel_size=3, sigma=(1.0, 2.0)),
-                transforms.ToTensor(),])
+        degradation = v2.Compose([
+                v2.Resize((16, 16), interpolation=InterpolationMode.BICUBIC),
+                v2.Resize((64, 64), interpolation=InterpolationMode.BICUBIC),
+                v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
 
-        transform = transforms.Compose([
-            transforms.Resize((64, 64)),
-            transforms.ToTensor(),])        
+        transform = v2.Compose([
+            v2.Resize((64, 64)),
+            v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])  
+        
         original_image = transform(original_image)
         distorted_image = degradation(distorted_image)
 
