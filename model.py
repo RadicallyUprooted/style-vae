@@ -70,9 +70,9 @@ class UpsampleBlock(nn.Module):
 
     def forward(self, x):
 
-        x = self.conv(x)
+        x = self.upsample(x)
 
-        return self.upsample(x)
+        return self.conv(x)
 
 class DownsampleBlock(nn.Module):
     def __init__(self, features):
@@ -83,9 +83,9 @@ class DownsampleBlock(nn.Module):
 
     def forward(self, x):
 
-        x = self.conv(x)
+        x = self.downsample(x)
 
-        return self.downsample(x)    
+        return self.conv(x)   
 
 class EncoderLR(nn.Module):
     def __init__(self, latent_dim):
@@ -274,5 +274,94 @@ class MINE(nn.Module):
         x = self.conv_block(x)
         x = x.view(x.size(0), -1)
         x = self.fc(x)
+
+        return x
+        
+class SRResNet(nn.Module):
+
+    def __init__(self):
+        super(SRResNet, self).__init__()
+        self.conv_block1 = nn.Sequential(
+
+            nn.Conv2d(kernel_size=3, in_channels=3, out_channels=64, stride=1, padding=1),
+            nn.SiLU(inplace=True)
+
+        )
+        self.residual_blocks = nn.ModuleList()          
+        for _ in range(16):
+            self.residual_blocks.append(AttentionResBlock(64))
+        self.conv_block2 = nn.Sequential(
+
+            nn.Conv2d(kernel_size=3, in_channels=64, out_channels=64, stride=1, padding=1),
+            nn.SiLU(inplace=True)
+
+        )
+        self.upsample_blocks = nn.Sequential(
+
+            nn.Conv2d(kernel_size=3, in_channels=64, out_channels=256, stride=1, padding=1),
+            nn.PixelShuffle(2),
+            nn.SiLU(inplace=True),
+
+            nn.Conv2d(kernel_size=3, in_channels=64, out_channels=256, stride=1, padding=1),
+            nn.PixelShuffle(2),
+            nn.SiLU(inplace=True),
+        )
+        self.conv_block3 = nn.Sequential(
+            nn.Conv2d(kernel_size=3, in_channels=64, out_channels=3, stride=1, padding=1),
+        )
+
+    def forward(self, x):
+
+        out = self.conv_block1(x)
+        residual = out
+        for layer in self.residual_blocks:
+            out = layer(out)
+            out = out + residual
+        out = self.conv_block2(out)
+        out = out + residual
+        out = self.upsample_blocks(out)
+        out = self.conv_block3(out)
+
+        return out
+
+class LocalAttention(nn.Module):
+    def __init__(self, channels) -> None:
+        super().__init__()
+
+        self.conv1 = nn.Conv1d(channels, channels, kernel_size=5, padding=2, groups=channels, bias=False)
+        self.conv2 = nn.Conv1d(channels, channels, kernel_size=5, padding=2, groups=channels, bias=False)
+
+        self.norm1 = nn.GroupNorm(16, channels)
+        self.norm2 = nn.GroupNorm(16, channels)
+
+    def forward(self, x):
+
+        b, c, h, w = x.size()
+
+        x_h = torch.mean(x, dim=3, keepdim=True).view(b, c, h)
+        x_w = torch.mean(x, dim=2, keepdim=True).view(b, c, w)
+
+        x_h = torch.sigmoid(self.norm1(self.conv1(x_h))).view(b, c, h, 1)
+        x_w = torch.sigmoid(self.norm2(self.conv2(x_w))).view(b, c, 1, w)
+
+        return x * x_h * x_w
+
+
+class AttentionResBlock(nn.Module):
+    def __init__(self, channels) -> None:
+        super().__init__()
+
+        self.attention = LocalAttention(channels)
+        self.conv1 = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=3, padding=1)
+        self.actv = nn.SiLU(inplace=True)
+        self.conv2 = nn.Conv2d(in_channels=channels, out_channels=channels, kernel_size=3, padding=1)
+
+    def forward(self, x):
+
+        residual = x
+
+        x = self.conv2(self.actv(self.conv1(x)))
+        x = self.attention(x)
+        x = torch.add(x, residual)
 
         return x
