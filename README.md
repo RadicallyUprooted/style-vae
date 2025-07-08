@@ -3,7 +3,7 @@
 This project uses a Variational Autoencoder (VAE) to generate images that combine the content of one image with the style of another. It is highly inspired by `Exploiting Style and Attention in Real-World Super-Resolution` by [(Ma et al., 2019)](https://arxiv.org/abs/1912.10227). The original idea was to develop a method for reproducing more natural low-resolution images, which could theoretically help super-resolution models generalize better. However, due to hardware limitations, I was unable to reproduce the results of Ma et al., though overall, the model appears to be on the right track.
 
 <div style="display: flex; justify-content: center;">
-  <img src="checkpoints/samples/checkpoint_test_result.png" alt="Recent checkpoint result" style="width: 55%;">
+  <img src="checkpoints/samples/checkpoint_test_result.png" alt="Recent checkpoint result" style="width: 100%;">
 </div>
 
 ## Model Architecture
