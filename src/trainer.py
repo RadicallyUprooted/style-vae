@@ -12,11 +12,12 @@ from .losses import VGGPerceptualLoss, mutual_information_loss, kl_divergence_lo
 
 class Trainer:
     """Handles the model training, optimization, and checkpointing."""
-    def __init__(self, config: Dict, train_loader: DataLoader):
+    def __init__(self, config: Dict, train_loader: DataLoader, checkpoint_path: str = None):
         """
         Args:
             config (Dict): A dictionary containing training configuration.
             train_loader (DataLoader): The data loader for training data.
+            checkpoint_path (str, optional): Path to a checkpoint to resume training from.
         """
         self.config = config
         self.train_loader = train_loader
@@ -36,16 +37,39 @@ class Trainer:
         self.sample_dir = os.path.join(self.checkpoint_dir, 'samples')
         os.makedirs(self.sample_dir, exist_ok=True)
 
+        self.start_epoch = 1
+        if checkpoint_path:
+            self._load_checkpoint(checkpoint_path)
+
     def train(self):
         """Runs the main training loop for the specified number of epochs."""
         # Get a fixed batch for generating samples every epoch
         fixed_batch = next(iter(self.train_loader))
         print(f"Obtained a fixed batch of {fixed_batch[0].size(0)} images for sampling.")
 
-        for epoch in range(1, self.config['num_epochs'] + 1):
+        for epoch in range(self.start_epoch, self.config['num_epochs'] + 1):
             self._train_epoch(epoch)
             self._save_checkpoint(epoch)
             self._save_sample_images(epoch, fixed_batch)
+
+    def _load_checkpoint(self, checkpoint_path: str):
+        """Loads a model checkpoint."""
+        if not os.path.exists(checkpoint_path):
+            print(f"Warning: Checkpoint path {checkpoint_path} does not exist. Starting from scratch.")
+            return
+            
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        self.vae.load_state_dict(checkpoint['vae_state_dict'])
+        self.mine.load_state_dict(checkpoint['mine_state_dict'])
+        self.vae_optim.load_state_dict(checkpoint['vae_optim_state_dict'])
+        self.mine_optim.load_state_dict(checkpoint['mine_optim_state_dict'])
+        self.start_epoch = checkpoint['epoch'] + 1
+        
+        # Check if config is compatible
+        if 'config' in checkpoint and checkpoint['config'] != self.config:
+            print("Warning: The loaded checkpoint's config differs from the current config.")
+
+        print(f"Loaded checkpoint from {checkpoint_path}. Resuming training from epoch {self.start_epoch}.")
 
     def _train_epoch(self, epoch: int):
         """Runs a single training epoch."""

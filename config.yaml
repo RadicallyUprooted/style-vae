@@ -1,0 +1,9 @@
+batch_size: 16
+checkpoint_dir: checkpoints
+data_path: data
+kl_weight: 0.0001
+latent_dim: 128
+lr: 0.0001
+mi_weight: 0.1
+num_epochs: 30
+style_weight: 0.01

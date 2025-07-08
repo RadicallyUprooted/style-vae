@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 from src.data import ImageArtifactsDataset
 from src.trainer import Trainer
 
-def main(config):
+def main(config, checkpoint_path=None):
     # Create dataset and dataloader
     dataset = ImageArtifactsDataset(
         folder_path=config['data_path'],
@@ -20,12 +20,13 @@ def main(config):
     )
 
     # Initialize and run trainer
-    trainer = Trainer(config, train_loader)
+    trainer = Trainer(config, train_loader, checkpoint_path)
     trainer.train()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train VAE for image artifact generation.')
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to the config file.')
+    parser.add_argument('--checkpoint', type=str, default=None, help='Path to a checkpoint to resume training from.')
     args = parser.parse_args()
 
     # Load config from YAML file
@@ -51,4 +52,4 @@ if __name__ == '__main__':
             yaml.dump(config, f)
         print("Created a default 'config.yaml'. Please review and edit it.")
 
-    main(config)
+    main(config, args.checkpoint)

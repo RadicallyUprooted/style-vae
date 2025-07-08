@@ -13,12 +13,12 @@ class VGGPerceptualLoss(nn.Module):
     """
     def __init__(self, device: torch.device):
         super(VGGPerceptualLoss, self).__init__()
-        vgg = models.vgg19(weights='DEFAULT').features[:29].to(device).eval()
+        vgg = models.vgg19(weights='DEFAULT').features[:6].to(device).eval()
         for param in vgg.parameters():
             param.requires_grad = False
         self.vgg = vgg
         
-        self.indexes = [0, 5, 10, 19, 28]
+        self.indexes = [0, 5]
         self.normalize = v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         self.criterion = nn.L1Loss()
 
